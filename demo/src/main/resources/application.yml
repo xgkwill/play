@@ -1,0 +1,13 @@
+server:  
+  port: 8888  
+spring:  
+  application:  
+   name: config  
+  cloud: 
+    config:  
+      server:  
+        git:  
+          uri: https://github.com/xgkwill/play.git     # 配置github仓库的地址，注意，此处必须以.git结尾  
+           # github仓库地址下的相对地址，可以配置多个，用,分割。  
+          username: xgkwill                                             # github仓库的账号  
+          password: xu1993129                                             # github仓库的密码  
