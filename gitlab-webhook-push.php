@@ -1,120 +1,67 @@
 <?php
-/**
- * GitLab Web Hook
- *
- * This script should be placed within the web root of your desired deploy
- * location. The GitLab repository should then be configured to call it for the
- * "Push events" trigger via the Web Hooks settings page.
- *
- * Each time this script is called, it executes a hook shell script and logs all
- * output to the log file.
- *
- * This hook uses php's exec() function, so make sure it can be executed.
- * See http://php.net/manual/function.exec.php for more info
- */
 
-// CONFIGURATION
-// =============
+/ 本地仓库路径
+$local = '/var/www/html/PRO';
 
-/* Hook script location. The hook script is a simple shell script that executes
- * the actual git push. Make sure the script is either outside the web root or
- * inaccessible from the web
- *
- * This setting is REQUIRED
- */
-$hookfile = '.hooks/gitlab-webhook-push.sh';
+// 安全验证字符串，为空则不验证
+$token = '123456';
 
-/* Log file location. Log file has both this script's and shell script's output.
- * Make sure PHP can write to the location of the log file, otherwise no log
- * will be created!
- *
- * This setting is REQUIRED
- */
-$logfile = '.hooks/gitlab-webhook-push.log';
 
-/* Hook password. If set, this password should be passed as a GET parameter to
- * this script on every call, otherwise the hook won't be executed.
- *
- * This setting is RECOMMENDED
- */
-// $password = 'a_strong_password';
-
-/* Ref name. This limits the hook to only execute the shell script if a push
- * event was generated for a certain ref (most commonly - a master branch).
- *
- * Can also be an array of refs:
- *
- *     $ref = array('refs/heads/master', 'refs/heads/develop');
- *
- * This setting does not support the actual refspec, so the refs should match
- * exactly.
- *
- * See http://git-scm.com/book/en/Git-Internals-The-Refspec for more info on
- * the subject of Refspec
- *
- * This setting is OPTIONAL
- */
-$ref = 'refs/heads/master';
-
-// THE ACTUAL SCRIPT
-// -----------------
-// You shouldn't edit beyond this point,
-// unless you know what you're doing
-// =====================================
-function log_append($message, $time = null)
-{
-    global $logfile;
-
-    $time = $time === null ? time() : $time;
-    $date = date('Y-m-d H:i:s');
-    $pre  = $date . ' (' . $_SERVER['REMOTE_ADDR'] . '): ';
-
-    file_put_contents($logfile, $pre . $message . "\n", FILE_APPEND);
+// 如果启用验证，并且验证失败，返回错误
+$httpToken = isset($_SERVER['HTTP_X_GITLAB_TOKEN']) ? $_SERVER['HTTP_X_GITLAB_TOKEN'] : '';
+if ($token && $httpToken != $token) {
+    header('HTTP/1.1 403 Permission Denied');
+    die('Permission denied.');
 }
 
-function exec_command($command)
-{
-    $output = array();
-
-    exec($command, $output);
-
-    foreach ($output as $line) {
-        log_append('SHELL: ' . $line);
-    }
+// 如果仓库目录不存在，返回错误
+if (!is_dir($local)) {
+    header('HTTP/1.1 500 Internal Server Error');
+    die('Local directory is missing');
 }
 
-if (isset($password))
-{
-    if (empty($_REQUEST['p'])) {
-        log_append('Missing hook password');
-        die();
-    }
-
-    if ($_REQUEST['p'] !== $password) {
-        log_append('Invalid hook password');
-        die();
-    }
+//如果请求体内容为空，返回错误
+$payload = file_get_contents('php://input');
+if (!$payload) {
+    header('HTTP/1.1 400 Bad Request');
+    die('HTTP HEADER or POST is missing.');
 }
 
-// GitLab sends the json as raw post data
-$input = file_get_contents("php://input");
-$json  = json_decode($input);
-
-if (!is_object($json) || empty($json->ref)) {
-    log_append('Invalid push event data');
-    die();
-}
-
-if (isset($ref))
-{
-    $_refs = (array) $ref;
-
-    if ($ref !== '*' && !in_array($json->ref, $_refs)) {
-        log_append('Ignoring ref ' . $json->ref);
-        die();
-    }
-}
-
-log_append('Launching shell hook script...');
-exec_command('sh ' . $hookfile);
-log_append('Shell hook script finished');
+/*
+ * 这里有几点需要注意：
+ *
+ * 1.确保PHP正常执行系统命令。写一个PHP文件，内容：
+ * `<?php shell_exec('ls -la')`
+ * 在通过浏览器访问这个文件，能够输出目录结构说明PHP可以运行系统命令。
+ *
+ * 2、PHP一般使用www-data或者nginx用户运行，PHP通过脚本执行系统命令也是用这个用户，
+ * 所以必须确保在该用户家目录（一般是/home/www-data或/home/nginx）下有.ssh目录和
+ * 一些授权文件，以及git配置文件，如下：
+ * ```
+ * + .ssh
+ *   - authorized_keys
+ *   - config
+ *   - id_rsa
+ *   - id_rsa.pub
+ *   - known_hosts
+ * - .gitconfig
+ * ```
+ *
+ * 3.在执行的命令后面加上2>&1可以输出详细信息，确定错误位置
+ *
+ * 4.git目录权限问题。比如：
+ * `fatal: Unable to create '/data/www/html/awaimai/.git/index.lock': Permission denied`
+ * 那就是PHP用户没有写权限，需要给目录授予权限:
+ * ``
+ * sudo chown -R :www-data /data/www/html/awaimai`
+ * sudo chmod -R g+w /data/www/html/awaimai
+ * ```
+ *
+ * 5.SSH认证问题。如果是通过SSH认证，有可能提示错误：
+ * `Could not create directory '/.ssh'.`
+ * 或者
+ * `Host key verification failed.`
+ *
+ */
+echo shell_exec("cd {$local} && git pull 2>&1");
+die("done " . date('Y-m-d H:i:s', time()));
